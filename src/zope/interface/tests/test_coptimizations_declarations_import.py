@@ -49,239 +49,156 @@ def _make_subprocess_env():
         p for p in sys.path if p))
 
 
-# Child code: break first attribute (BuiltinImplementationSpecifications)
-_CHILD_FIRST_ATTR = textwrap.dedent("""
-    import gc
-    import importlib.util
-    import sys
-
-    import zope.interface.declarations as decl_mod
-
-    spec = importlib.util.find_spec(
-        "zope.interface._zope_interface_coptimizations")
-    if spec is None or spec.loader is None:
-        raise SystemExit("could not locate the C extension module spec")
-
-    def fresh_module():
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    class Foo:
-        pass
-
-    saved = decl_mod.BuiltinImplementationSpecifications
-    del decl_mod.BuiltinImplementationSpecifications
-    try:
-        broken = fresh_module()
-        gc.collect()
-        before = sys.getrefcount(decl_mod)
-        try:
-            broken.getObjectSpecification(Foo())
-        except AttributeError:
-            pass
-        else:
-            raise SystemExit(
-                "expected AttributeError, call unexpectedly succeeded")
-        gc.collect()
-        after = sys.getrefcount(decl_mod)
-        if after != before:
-            raise SystemExit(
-                "declarations module refcount went from %d to %d "
-                "across a failed import" % (before, after))
-    finally:
-        decl_mod.BuiltinImplementationSpecifications = saved
-
-    broken.getObjectSpecification(Foo())
-    print("ok")
-    """)
+# Attributes in order of access by _zic_state_load_declarations
+_ATTRS = [
+    "BuiltinImplementationSpecifications",
+    "_empty",
+    "implementedByFallback",
+    "Implements",
+]
 
 
-# Child code: break second attribute (_empty), check first attr refcount
-_CHILD_SECOND_ATTR = textwrap.dedent("""
-    import gc
-    import importlib.util
-    import sys
+def _var_name(attr):
+    """Generate a clean variable name for an attribute.
 
-    import zope.interface.declarations as decl_mod
-
-    spec = importlib.util.find_spec(
-        "zope.interface._zope_interface_coptimizations")
-    if spec is None or spec.loader is None:
-        raise SystemExit("could not locate the C extension module spec")
-
-    def fresh_module():
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    class Foo:
-        pass
-
-    saved_empty = decl_mod._empty
-    saved_builtin = decl_mod.BuiltinImplementationSpecifications
-    del decl_mod._empty
-    try:
-        broken = fresh_module()
-        gc.collect()
-        before_builtin = sys.getrefcount(saved_builtin)
-        before = sys.getrefcount(decl_mod)
-        try:
-            broken.getObjectSpecification(Foo())
-        except AttributeError:
-            pass
-        else:
-            raise SystemExit(
-                "expected AttributeError, call unexpectedly succeeded")
-        gc.collect()
-        after_builtin = sys.getrefcount(saved_builtin)
-        after = sys.getrefcount(decl_mod)
-        if after_builtin != before_builtin:
-            raise SystemExit(
-                "BuiltinImplSpec refcount went from %d to %d "
-                "across a failed import" % (before_builtin, after_builtin))
-        if after != before:
-            raise SystemExit(
-                "declarations module refcount went from %d to %d "
-                "across a failed import" % (before, after))
-    finally:
-        decl_mod._empty = saved_empty
-
-    broken.getObjectSpecification(Foo())
-    print("ok")
-    """)
+    Strips leading underscores and uses shorter names for common attributes.
+    """
+    # Short names for common attributes
+    short_names = {
+        'BuiltinImplementationSpecifications': 'builtin',
+        'implementedByFallback': 'fallback',
+        'Implements': 'implements',
+        '_empty': 'empty',
+    }
+    return short_names.get(attr, attr.lstrip('_'))
 
 
-# Child code: break third attribute (implementedByFallback)
-_CHILD_THIRD_ATTR = textwrap.dedent("""
-    import gc
-    import importlib.util
-    import sys
+def _make_child_code(break_index, break_value=None):
+    """Generate child code that breaks attribute at break_index.
 
-    import zope.interface.declarations as decl_mod
+    Args:
+        break_index: index into _ATTRS for which attribute to break
+        break_value: if provided, set attribute to this value instead of
+            deleting
+    """
+    # Build the code lines
+    lines = []
 
-    spec = importlib.util.find_spec(
-        "zope.interface._zope_interface_coptimizations")
-    if spec is None or spec.loader is None:
-        raise SystemExit("could not locate the C extension module spec")
+    # Header
+    lines.append('    import gc')
+    lines.append('    import importlib.util')
+    lines.append('    import sys')
+    lines.append('')
+    lines.append('    import zope.interface.declarations as decl_mod')
+    lines.append('')
+    lines.append('    spec = importlib.util.find_spec(')
+    lines.append('        "zope.interface._zope_interface_coptimizations")')
+    lines.append('    if spec is None or spec.loader is None:')
+    lines.append('        raise SystemExit(')
+    lines.append('            "could not locate the C extension module spec")')
+    lines.append('')
+    lines.append('    def fresh_module():')
+    lines.append('        module = importlib.util.module_from_spec(spec)')
+    lines.append('        spec.loader.exec_module(module)')
+    lines.append('        return module')
+    lines.append('')
+    lines.append('    class Foo:')
+    lines.append('        pass')
+    lines.append('')
 
-    def fresh_module():
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+    # Save attributes up to and including break_index
+    saved = []
+    for i in range(break_index + 1):
+        a = _ATTRS[i]
+        var = _var_name(a)
+        lines.append(f'    saved_{var} = decl_mod.{a}')
+        saved.append((a, var))
+    lines.append('')
 
-    class Foo:
-        pass
+    # Break the attribute at break_index
+    attr = _ATTRS[break_index]
+    if break_value is not None:
+        lines.append(f'    decl_mod.{attr} = {break_value}')
+    else:
+        lines.append(f'    del decl_mod.{attr}')
+    lines.append('')
 
-    saved_fallback = decl_mod.implementedByFallback
-    saved_empty = decl_mod._empty
-    saved_builtin = decl_mod.BuiltinImplementationSpecifications
-    del decl_mod.implementedByFallback
-    try:
-        broken = fresh_module()
-        gc.collect()
-        before_builtin = sys.getrefcount(saved_builtin)
-        before_empty = sys.getrefcount(saved_empty)
-        before = sys.getrefcount(decl_mod)
-        try:
-            broken.getObjectSpecification(Foo())
-        except AttributeError:
-            pass
-        else:
-            raise SystemExit(
-                "expected AttributeError, call unexpectedly succeeded")
-        gc.collect()
-        after_builtin = sys.getrefcount(saved_builtin)
-        after_empty = sys.getrefcount(saved_empty)
-        after = sys.getrefcount(decl_mod)
-        if after_builtin != before_builtin:
-            raise SystemExit(
-                "BuiltinImplSpec refcount went from %d to %d "
-                "across a failed import" % (before_builtin, after_builtin))
-        if after_empty != before_empty:
-            raise SystemExit(
-                "_empty refcount went from %d to %d "
-                "across a failed import" % (before_empty, after_empty))
-        if after != before:
-            raise SystemExit(
-                "declarations module refcount went from %d to %d "
-                "across a failed import" % (before, after))
-    finally:
-        decl_mod.implementedByFallback = saved_fallback
+    # Try block
+    lines.append('    try:')
+    lines.append('        broken = fresh_module()')
+    lines.append('        gc.collect()')
 
-    broken.getObjectSpecification(Foo())
-    print("ok")
-    """)
+    # Before refcounts for all saved attrs + module
+    lines.append('        before = {}')
+    for a, var in saved:
+        lines.append(f'        before_{var} = sys.getrefcount(saved_{var})')
+    lines.append('        before_decl_mod = sys.getrefcount(decl_mod)')
+    lines.append('')
+
+    # Call that should fail
+    lines.append('        try:')
+    if break_value is not None:
+        lines.append('            broken.getObjectSpecification(Foo())')
+        lines.append('        except TypeError as e:')
+        lines.append('            if "not a type" not in str(e):')
+        lines.append('                raise')
+    else:
+        lines.append('            broken.getObjectSpecification(Foo())')
+        lines.append('        except AttributeError:')
+        lines.append('            pass')
+    lines.append('        else:')
+    lines.append('            raise SystemExit(')
+    lines.append(
+        '                "expected error, call unexpectedly succeeded")')
+    lines.append('')
+
+    # After refcounts
+    lines.append('        gc.collect()')
+    for a, var in saved:
+        lines.append(f'        after_{var} = sys.getrefcount(saved_{var})')
+    lines.append('        after_decl_mod = sys.getrefcount(decl_mod)')
+    lines.append('')
+
+    # Checks
+    for a, var in saved:
+        a_short = ('BuiltinImplSpec'
+                   if a == 'BuiltinImplementationSpecifications' else a)
+        lines.append(f'        if after_{var} != before_{var}:')
+        lines.append('            raise SystemExit(')
+        lines.append(
+            '                "%s refcount went from %%d to %%d "' %
+            a_short)
+        lines.append(
+            f'                "across a failed import" %\n'
+            f'                (before_{var}, after_{var}))')
+    lines.append('        if after_decl_mod != before_decl_mod:')
+    lines.append('            raise SystemExit(')
+    lines.append('                "declarations module refcount went from %d' +
+                 ' to %d "')
+    lines.append('                "across a failed import" %')
+    lines.append('                (before_decl_mod, after_decl_mod))')
+    lines.append('')
+
+    # Finally - restore
+    lines.append('    finally:')
+    for a, var in saved:
+        lines.append(f'        decl_mod.{a} = saved_{var}')
+    lines.append('')
+
+    # Recovery test on same instance
+    lines.append('    broken.getObjectSpecification(Foo())')
+    lines.append('    print("ok")')
+
+    return textwrap.dedent('\n'.join(lines))
 
 
-# Child code: make Implements not a type
-_CHILD_IMPLEMENTS_NOT_TYPE = textwrap.dedent("""
-    import gc
-    import importlib.util
-    import sys
-
-    import zope.interface.declarations as decl_mod
-
-    spec = importlib.util.find_spec(
-        "zope.interface._zope_interface_coptimizations")
-    if spec is None or spec.loader is None:
-        raise SystemExit("could not locate the C extension module spec")
-
-    def fresh_module():
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    class Foo:
-        pass
-
-    saved_implements = decl_mod.Implements
-    saved_fallback = decl_mod.implementedByFallback
-    saved_empty = decl_mod._empty
-    saved_builtin = decl_mod.BuiltinImplementationSpecifications
-    decl_mod.Implements = 42  # Not a type
-    try:
-        broken = fresh_module()
-        gc.collect()
-        before_builtin = sys.getrefcount(saved_builtin)
-        before_empty = sys.getrefcount(saved_empty)
-        before_fallback = sys.getrefcount(saved_fallback)
-        before = sys.getrefcount(decl_mod)
-        try:
-            broken.getObjectSpecification(Foo())
-        except TypeError as e:
-            if "not a type" not in str(e):
-                raise
-        else:
-            raise SystemExit(
-                "expected TypeError, call unexpectedly succeeded")
-        gc.collect()
-        after_builtin = sys.getrefcount(saved_builtin)
-        after_empty = sys.getrefcount(saved_empty)
-        after_fallback = sys.getrefcount(saved_fallback)
-        after = sys.getrefcount(decl_mod)
-        if after_builtin != before_builtin:
-            raise SystemExit(
-                "BuiltinImplSpec refcount went from %d to %d "
-                "across a failed import" % (before_builtin, after_builtin))
-        if after_empty != before_empty:
-            raise SystemExit(
-                "_empty refcount went from %d to %d "
-                "across a failed import" % (before_empty, after_empty))
-        if after_fallback != before_fallback:
-            raise SystemExit(
-                "implementedByFallback refcount went from %d to %d "
-                "across failed import" % (before_fallback, after_fallback))
-        if after != before:
-            raise SystemExit(
-                "declarations module refcount went from %d to %d "
-                "across a failed import" % (before, after))
-    finally:
-        decl_mod.Implements = saved_implements
-
-    broken.getObjectSpecification(Foo())
-    print("ok")
-    """)
+# Generate child codes
+# Break BuiltinImplementationSpecifications
+_CHILD_FIRST_ATTR = _make_child_code(0)
+_CHILD_SECOND_ATTR = _make_child_code(1)  # Break _empty
+_CHILD_THIRD_ATTR = _make_child_code(2)  # Break implementedByFallback
+_CHILD_IMPLEMENTS_NOT_TYPE = _make_child_code(
+    3, break_value=42)  # Set Implements to non-type
 
 
 class DeclarationsImportRefcountTests(unittest.TestCase):
