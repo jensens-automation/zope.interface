@@ -218,32 +218,50 @@ static PyTypeObject *Implements;
 static int
 import_declarations(void)
 {
-    PyObject *declarations, *i;
+    PyObject *declarations;
+    PyObject *builtin_impl_specs = NULL;
+    PyObject *empty_local = NULL;
+    PyObject *fallback_local = NULL;
+    PyObject *implements_local = NULL;
 
     declarations = PyImport_ImportModule("zope.interface.declarations");
-    if (declarations == NULL) { return -1; }
+    if (declarations == NULL) {
+        return -1;
+    }
 
-    BuiltinImplementationSpecifications = PyObject_GetAttrString(
+    builtin_impl_specs = PyObject_GetAttrString(
                         declarations, "BuiltinImplementationSpecifications");
-    if (BuiltinImplementationSpecifications == NULL) { goto error; }
+    if (builtin_impl_specs == NULL) {
+        goto error;
+    }
 
-    empty = PyObject_GetAttrString(declarations, "_empty");
-    if (empty == NULL) { goto error; }
+    empty_local = PyObject_GetAttrString(declarations, "_empty");
+    if (empty_local == NULL) {
+        goto error;
+    }
 
-    fallback = PyObject_GetAttrString(declarations, "implementedByFallback");
-    if (fallback == NULL) { goto error; }
+    fallback_local = PyObject_GetAttrString(declarations, "implementedByFallback");
+    if (fallback_local == NULL) {
+        goto error;
+    }
 
-    i = PyObject_GetAttrString(declarations, "Implements");
-    if (i == NULL) { goto error; }
+    implements_local = PyObject_GetAttrString(declarations, "Implements");
+    if (implements_local == NULL) {
+        goto error;
+    }
 
-    if (! PyType_Check(i)) {
+    if (! PyType_Check(implements_local)) {
         PyErr_SetString(
             PyExc_TypeError,
             "zope.interface.declarations.Implements is not a type");
         goto error;
     }
 
-    Implements = (PyTypeObject *)i;
+    /* All attributes fetched successfully, now assign to globals */
+    BuiltinImplementationSpecifications = builtin_impl_specs;
+    empty = empty_local;
+    fallback = fallback_local;
+    Implements = (PyTypeObject *)implements_local;
 
     Py_DECREF(declarations);
 
@@ -252,6 +270,10 @@ import_declarations(void)
 
 error:
     Py_DECREF(declarations);
+    Py_XDECREF(builtin_impl_specs);
+    Py_XDECREF(empty_local);
+    Py_XDECREF(fallback_local);
+    Py_XDECREF(implements_local);
     return -1;
 }
 
@@ -2826,7 +2848,6 @@ static struct PyMethodDef _zic_module_methods[] = {
       METH_O,
       getObjectSpecification___doc__ },
     { "providedBy", (PyCFunction)providedBy, METH_O, providedBy___doc__ },
-
     { NULL, (PyCFunction)NULL, 0, NULL } /* sentinel */
 };
 
